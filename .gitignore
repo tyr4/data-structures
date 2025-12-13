@@ -1,2 +1,5 @@
 .idea/
-a.out
+*.out
+
+# valgrind stuff
+vgcore.*
