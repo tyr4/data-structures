@@ -9,15 +9,18 @@ typedef struct node {
     struct node **children;
     struct node *parent;
 
-    int leaf;
     int currentKeys;
 } BTreeNode;
 
 typedef struct btree {
     BTreeNode *root;
-
-    int t; // minimum degree
 } BTree;
+
+typedef struct splitResult {
+    int hasSplit;
+    int promotedKey;
+    BTreeNode *rightNode;
+} SplitResult;
 
 void* safeMalloc(size_t size) {
     void* p = malloc(size);
@@ -37,15 +40,13 @@ BTreeNode* initRoot() {
     node->children = (BTreeNode**)safeMalloc(sizeof(BTreeNode*) * (MAX_KEYS + 1));
     node->parent = NULL;
     node->currentKeys = 0;
-    node->leaf = 1;
 
     // make sure the children are set on NULL and keys on -1
-    for (int i = 0; i <= MAX_KEYS; i++) {
+    for (int i = 0; i < MAX_KEYS; i++) {
         node->children[i] = NULL;
-
-        if (i < MAX_KEYS) node->keys[i] = 0;
+        node->keys[i] = 0;
     }
-
+    node->children[MAX_KEYS] = NULL;
 
     return node;
 }
@@ -53,9 +54,7 @@ BTreeNode* initRoot() {
 BTreeNode* initChild(BTreeNode *parent) {
     BTreeNode *node = initRoot();
 
-    // inainte sa fac node->parent = parent, faceam node->parent = malloc(node) si ii dadeam assign dupa
     node->parent = parent;
-    parent->leaf = 0;
 
     return node;
 }
@@ -63,7 +62,6 @@ BTreeNode* initChild(BTreeNode *parent) {
 BTree* initBTree() {
     BTree *tree = (BTree*)safeMalloc(sizeof(BTree));
     tree->root = initRoot();
-    tree->t = MAX_KEYS / 2 + 1;
 
     return tree;
 }
@@ -80,17 +78,20 @@ void freeBTree(BTreeNode *root) {
         }
     }
 
-    // daca bagam linia asta aici crapa la urmatorul check in forul de mai sus
-    // if (root->parent != NULL) free(root->parent);
     free(root->keys);
     free(root->children);
     free(root);
 }
 
-// BTreeNode* splitChild(BTreeNode *node) {
-//     BTreeNode *left = initRoot();
-//     BTreeNode *right = initRoot();
-// }
+int isLeaf(BTreeNode *node) {
+    for (int i = 0; i <= node->currentKeys; i++) {
+        if (node->children[i] != NULL) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
 
 int getKeyPosition(int *array, int size, int key) {
     if (size == 0) return 0;
@@ -118,7 +119,7 @@ void insertSortedArray(int *array, int *size, int key) {
     int pos = getKeyPosition(array, *size, key);
 
     // move the nodes 1 position to the right starting from pos
-    for (int i = *size; i >= pos; i--) {
+    for (int i = *size; i >= pos && i > 0; i--) {
         array[i] = array[i - 1];
     }
 
@@ -126,79 +127,139 @@ void insertSortedArray(int *array, int *size, int key) {
     (*size)++;
 }
 
-void insertToBTree(BTree* tree, BTreeNode* root, int key) {
-    if (root == NULL) {
-        return;
-    }
 
-    // find the right leaf
-    if (!root->leaf) {
-        int keyPos = getKeyPosition(root->keys, root->currentKeys, key);
+SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
+    SplitResult result = {0, 0, NULL};
 
-        // key goes to the leftmost child
-        if (keyPos == 0) {
-            insertToBTree(tree, root->children[0], key);
-        }
-
-        // key goes to the rightmost child
-        else if (keyPos == root->currentKeys) {
-            insertToBTree(tree, root->children[root->currentKeys], key);
-        }
-
-        // key goes inbetween
-        else {
-            insertToBTree(tree, root->children[keyPos + 1], key);
-        }
-    }
-
-    else {
-        // check if the node has space
+    // case 1: leaf
+    if (isLeaf(root)) {
         if (root->currentKeys < MAX_KEYS) {
             insertSortedArray(root->keys, &root->currentKeys, key);
+            return result;
         }
-        else {
-            printf("Couldnt add %d because the node is full\n", key);
-            // check if the root has to be split
-            if (tree->root == root) {
-                // get the middle key
-                int temp[root->currentKeys + 1], tempSize = root->currentKeys;
-                memcpy(temp, root->keys, root->currentKeys * sizeof(int));
-                insertSortedArray(temp, &tempSize, key);
-                int middleKey = temp[tempSize / 2];
 
-                // make a new root node
-                BTreeNode *newRoot = initRoot();
+        // case 1A: leaf split
+        // simulate adding the key to the key array
+        int temp[root->currentKeys + 1], tempSize = root->currentKeys;
+        memcpy(temp, root->keys, root->currentKeys * sizeof(int));
+        insertSortedArray(temp, &tempSize, key);
+        int middleKey = temp[tempSize / 2];
 
-                // insert the key to it
-                newRoot->keys[0] = middleKey;
-                newRoot->currentKeys++;
+        // set the SplitResult data
+        result.promotedKey = middleKey;
+        printf("promoted %d leaf split\n", result.promotedKey);
+        result.hasSplit = 1;
 
-                // make the left and right children
-                BTreeNode *leftChild = initChild(newRoot);
-                BTreeNode *rightChild = initChild(newRoot);
+        // make a split node
+        BTreeNode *rightNode = initChild(root);
+        result.rightNode = rightNode;
 
-                // append to left child the left side
-                memcpy(leftChild->keys, temp, (tempSize / 2) * sizeof(int));
-                memcpy(leftChild->children, root->children, (tempSize / 2 + 1) * sizeof(BTreeNode*));
-                leftChild->currentKeys = tempSize / 2;
-
-                // same to right child
-                memcpy(rightChild->keys, temp + tempSize / 2 + 1, (tempSize / 2) * sizeof(int));
-                memcpy(rightChild->children, root->children + tempSize / 2 + 1, (tempSize / 2) * sizeof(BTreeNode*));
-                rightChild->currentKeys = tempSize / 2;
-
-                // edit the new roots children
-                newRoot->children[0] = leftChild;
-                newRoot->children[1] = rightChild;
-                tree->root = newRoot;
-
-                // the current root is unused now
-                free(root->keys);
-                free(root->children);
-                free(root);
-            }
-
+        // replace the current node with the left side
+        int mid = tempSize / 2;
+        root->currentKeys = 0;
+        for (int i = 0; i < mid; i++) {
+            root->keys[root->currentKeys++] = temp[i];
         }
+
+        // set the right childs keys
+        for (int i = mid + 1; i < tempSize; i++) {
+            rightNode->keys[rightNode->currentKeys++] = temp[i];
+        }
+
+        // return the structure with the split data
+        return result;
+    }
+
+    // case 2: it has propagated to an internal node
+    // find the correct child top to bottom
+    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    BTreeNode *child = root->children[pos];
+
+    SplitResult childSplit = insertInternal(tree, child, key);
+
+    // the node has been inserted without splits
+    if (!childSplit.hasSplit) {
+        return result;
+    }
+
+    // case 2A: child split, safe to add directly here
+    if (root->currentKeys < MAX_KEYS) {
+        insertSortedArray(root->keys, &root->currentKeys, childSplit.promotedKey);
+
+        // shift children to the correct place
+        for (int i = root->currentKeys; i > pos + 1; i--) {
+            root->children[i] = root->children[i - 1];
+        }
+
+        root->children[pos + 1] = childSplit.rightNode;
+        childSplit.rightNode->parent = root;
+
+        return result;
+    }
+
+    // case 2B: a key has propagated here and the node is full
+    int tempKeys[root->currentKeys + 1];
+    BTreeNode *tempChildren[root->currentKeys + 2];
+
+    // copy the current keys and children
+    memcpy(tempKeys, root->keys, root->currentKeys * sizeof(int));
+    memcpy(tempChildren, root->children, (root->currentKeys + 1) * sizeof(BTreeNode*));
+
+    // add the new key to the temp array
+    int tempKeyCount = root->currentKeys;
+    insertSortedArray(tempKeys, &tempKeyCount, childSplit.promotedKey);
+
+    // fix children
+    for (int i = tempKeyCount; i > pos + 1; i--) {
+        tempChildren[i] = tempChildren[i - 1];
+    }
+
+    // split this node
+    tempChildren[pos + 1] = childSplit.rightNode;
+
+    int mid = tempKeyCount / 2;
+    result.promotedKey = tempKeys[mid];
+    printf("promoted %d child split\n", result.promotedKey);
+
+    result.hasSplit = 1;
+
+    BTreeNode *rightNode = initChild(root->parent);
+    result.rightNode = rightNode;
+
+    // replace the left childs data
+    root->currentKeys = 0;
+    for (int i = 0; i < mid; i++) {
+        root->keys[root->currentKeys] = tempKeys[i];
+        root->children[root->currentKeys] = tempChildren[i];
+
+        root->currentKeys++;
+    }
+    root->children[root->currentKeys] = tempChildren[mid];
+
+    // same for the right node
+    for (int i = mid + 1; i < tempKeyCount; i++) {
+        rightNode->keys[rightNode->currentKeys] = tempKeys[i];
+        rightNode->children[rightNode->currentKeys] = tempChildren[i];
+
+        rightNode->currentKeys++;
+    }
+    rightNode->children[rightNode->currentKeys] = tempChildren[tempKeyCount];
+
+    return result;
+}
+
+void insertToBTree(BTree* tree, BTreeNode* root, int key) {
+    SplitResult result = insertInternal(tree, root, key);
+
+    if (result.hasSplit) {
+        BTreeNode *newRoot = initRoot();
+        newRoot->keys[newRoot->currentKeys++] = result.promotedKey;
+        newRoot->children[0] = tree->root;
+        newRoot->children[1] = result.rightNode;
+
+        result.rightNode->parent = newRoot;
+        tree->root->parent = newRoot;
+        tree->root = newRoot;
     }
 }
 
@@ -245,13 +306,11 @@ void printBTree(BTreeNode* root) {
 int main(void) {
     BTree* tree = initBTree();
 
-    insertToBTree(tree, tree->root, 10);
-    insertToBTree(tree, tree->root, 20);
-    insertToBTree(tree, tree->root, 30);
-    insertToBTree(tree, tree->root, 40);
-    insertToBTree(tree, tree->root, 50);
-
-    printBTree(tree->root);
+    for (int i = 1; i <= 20; i++) {
+        insertToBTree(tree, tree->root, i);
+        printBTree(tree->root);
+        printf("------------\n");
+    }
 
     freeBTree(tree->root);
     free(tree);
