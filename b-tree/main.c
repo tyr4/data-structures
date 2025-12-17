@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_KEYS 4
+#define MAX_KEYS 5
+#define MINIMUM_KEYS 2
 
 typedef struct node {
     int *keys;
@@ -14,6 +15,8 @@ typedef struct node {
 
 typedef struct btree {
     BTreeNode *root;
+
+    int t; // minimum degree
 } BTree;
 
 typedef struct splitResult {
@@ -59,9 +62,10 @@ BTreeNode* initChild(BTreeNode *parent) {
     return node;
 }
 
-BTree* initBTree() {
+BTree* initBTree(int t) {
     BTree *tree = (BTree*)safeMalloc(sizeof(BTree));
     tree->root = initRoot();
+    tree->t = t;
 
     return tree;
 }
@@ -98,16 +102,38 @@ int getKeyPosition(int *array, int size, int key) {
 
     int pos = 0;
 
-    if (key < array[0]) pos = 0;                    // left
-    else if (key > array[size - 1]) pos = size;     // right
+    // the = stuff is for calls from the delete functions
+    if (key <= array[0]) pos = 0;                    // left
+    else if (key >= array[size - 1]) pos = size;     // right
     else for (int i = 0; i < size - 1; i++) {       // inbetween
-        if (key > array[i] && key < array[i + 1]) {
+        if (key >= array[i] && key <= array[i + 1]) {
             pos = i + 1;
             break;
         }
     }
 
     return pos;
+}
+// funni binary search
+int hasKeyInNode(int *array, int size, int key) {
+    int left = 0, right = size - 1;
+
+    while (left != right) {
+        int mid = (left + right) / 2;
+
+        if (key == array[mid]) {
+            return 1;
+        }
+
+        if (key > array[mid]) {
+            left = mid + 1;
+        }
+        else {
+            right = mid - 1;
+        }
+    }
+
+    return array[left] == key;
 }
 
 void insertSortedArray(int *array, int *size, int key) {
@@ -127,8 +153,15 @@ void insertSortedArray(int *array, int *size, int key) {
     (*size)++;
 }
 
+void deleteFromArray(int *array, int *size, int pos) {
+    for (int i = pos; i < *size - 1; i++) {
+        array[i] = array[i + 1];
+    }
 
-SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
+    (*size)--;
+}
+
+SplitResult insertInternal(BTreeNode* root, int key) {
     SplitResult result = {0, 0, NULL};
 
     // case 1: leaf
@@ -147,7 +180,6 @@ SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
 
         // set the SplitResult data
         result.promotedKey = middleKey;
-        printf("promoted %d leaf split\n", result.promotedKey);
         result.hasSplit = 1;
 
         // make a split node
@@ -175,7 +207,7 @@ SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
     int pos = getKeyPosition(root->keys, root->currentKeys, key);
     BTreeNode *child = root->children[pos];
 
-    SplitResult childSplit = insertInternal(tree, child, key);
+    SplitResult childSplit = insertInternal(child, key);
 
     // the node has been inserted without splits
     if (!childSplit.hasSplit) {
@@ -219,7 +251,6 @@ SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
 
     int mid = tempKeyCount / 2;
     result.promotedKey = tempKeys[mid];
-    printf("promoted %d child split\n", result.promotedKey);
 
     result.hasSplit = 1;
 
@@ -232,24 +263,34 @@ SplitResult insertInternal(BTree* tree, BTreeNode* root, int key) {
         root->keys[root->currentKeys] = tempKeys[i];
         root->children[root->currentKeys] = tempChildren[i];
 
+        if (tempChildren[i])
+            tempChildren[i]->parent = root;
+
         root->currentKeys++;
     }
     root->children[root->currentKeys] = tempChildren[mid];
+    if (tempChildren[mid])
+        tempChildren[mid]->parent = root;
 
     // same for the right node
     for (int i = mid + 1; i < tempKeyCount; i++) {
         rightNode->keys[rightNode->currentKeys] = tempKeys[i];
         rightNode->children[rightNode->currentKeys] = tempChildren[i];
 
+        if (tempChildren[i])
+            tempChildren[i]->parent = rightNode;
+
         rightNode->currentKeys++;
     }
     rightNode->children[rightNode->currentKeys] = tempChildren[tempKeyCount];
+    if (tempChildren[tempKeyCount])
+        tempChildren[tempKeyCount]->parent = rightNode;
 
     return result;
 }
 
 void insertToBTree(BTree* tree, BTreeNode* root, int key) {
-    SplitResult result = insertInternal(tree, root, key);
+    SplitResult result = insertInternal(root, key);
 
     if (result.hasSplit) {
         BTreeNode *newRoot = initRoot();
@@ -263,12 +304,118 @@ void insertToBTree(BTree* tree, BTreeNode* root, int key) {
     }
 }
 
+BTreeNode* getChild(BTreeNode* root, int key) {
+    if (root == NULL) {
+        return NULL;
+    }
+
+    // check if it has found the child
+    if (hasKeyInNode(root->keys, root->currentKeys, key)) {
+        return root;
+    }
+
+    // not found
+    if (isLeaf(root)) {
+        return NULL;
+    }
+
+    // key is in a child
+    // get right child position
+    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    return getChild(root->children[pos], key);
+}
+
+void borrowFromLeft(BTreeNode* parent, int childIndex) {
+    printf("hello from borrow left\n");
+    BTreeNode *child = parent->children[childIndex];
+    BTreeNode *leftChild = parent->children[childIndex - 1];
+
+    // shift keys to right
+    for (int i = child->currentKeys; i > 0; i--) {
+        child->keys[i] = child->keys[i - 1];
+    }
+
+    child->keys[0] = parent->keys[childIndex - 1];
+    child->currentKeys++;
+
+    parent->keys[childIndex - 1] = leftChild->keys[leftChild->currentKeys - 1];
+    leftChild->currentKeys--;
+}
+
+void borrowFromRight(BTreeNode* parent, int childIndex) {
+    printf("hello from borrow right\n");
+    BTreeNode *child = parent->children[childIndex];
+    BTreeNode *rightChild = parent->children[childIndex + 1];
+
+    child->keys[child->currentKeys++] = parent->keys[childIndex];
+    parent->keys[childIndex] = rightChild->keys[0];
+
+    // shift keys to left
+    for (int i = 0; i < rightChild->currentKeys - 1; i++) {
+        rightChild->keys[i] = rightChild->keys[i + 1];
+    }
+
+    rightChild->currentKeys--;
+}
+
+void mergeChildren(BTreeNode* parent, int childIndex) {
+    printf("hello from merge\n");
+}
+
+void fixUnderflow(BTreeNode* parent, int childIndex) {
+    // first check if it can borrow from left
+    if (childIndex > 0) {
+        if (parent->children[childIndex - 1] != NULL && parent->children[childIndex - 1]->currentKeys > MINIMUM_KEYS) {
+            borrowFromLeft(parent, childIndex);
+            return;
+        }
+    }
+
+    // then from right
+    if (childIndex < parent->currentKeys) {
+        if (parent->children[childIndex + 1] != NULL && parent->children[childIndex + 1]->currentKeys > MINIMUM_KEYS) {
+            borrowFromRight(parent, childIndex);
+            return;
+        }
+    }
+
+    // forced to merge
+    mergeChildren(parent, childIndex);
+}
+
+void deleteInternal(BTreeNode* root, int key) {
+    // key doesnt exist in tree
+    if (root == NULL) {
+        return;
+    }
+
+    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    // leaf delete operation
+    if (isLeaf(root)) {
+        int childIndex = getKeyPosition(root->parent->keys, root->parent->currentKeys, key);
+        deleteFromArray(root->keys, &root->currentKeys, pos);
+
+        // call helper function if the tree becomes invalid after delete
+        if (root->currentKeys < MINIMUM_KEYS) {
+            fixUnderflow(root->parent, childIndex);
+        }
+    }
+}
+
+// note that this doesnt work with duplicates
+void deleteFromBTree(BTree* tree, int key) {
+    BTreeNode *child = getChild(tree->root, key);
+
+    deleteInternal(child, key);
+}
+
 void printBTree(BTreeNode* root) {
     if (root == NULL) {
         return;
     }
 
     // first print the roots keys
+    printf("< ---- >\n");
     printf("Root: \t\t");
     for (int i = 0; i < root->currentKeys; i++) {
         printf("%d ", root->keys[i]);
@@ -303,14 +450,30 @@ void printBTree(BTreeNode* root) {
     }
 }
 
-int main(void) {
-    BTree* tree = initBTree();
+int main() {
+    BTree* tree = initBTree(5);
 
-    for (int i = 1; i <= 20; i++) {
+    for (int i = 1; i <= 27; i++) {
         insertToBTree(tree, tree->root, i);
         printBTree(tree->root);
         printf("------------\n");
     }
+
+    BTreeNode *child = getChild(tree->root, 10);
+
+    for (int i = 0; i < child->currentKeys; i++) {
+        printf("%d ", child->keys[i]);
+    }
+
+    deleteFromBTree(tree, 23);
+    deleteFromBTree(tree, 22);
+    printBTree(tree->root);
+    //
+    // deleteFromBTree(tree, 9);
+    // // printBTree(tree->root);
+    //
+    // deleteFromBTree(tree, 7);
+    // printBTree(tree->root);
 
     freeBTree(tree->root);
     free(tree);
