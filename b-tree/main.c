@@ -2,8 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_KEYS 5
-#define MINIMUM_KEYS 2
+int treeDegree = 3;
+#define MAX_KEYS (2 * treeDegree - 1)
+#define MINIMUM_KEYS (treeDegree - 1)
 
 typedef struct node {
     int *keys;
@@ -24,6 +25,9 @@ typedef struct splitResult {
     int promotedKey;
     BTreeNode *rightNode;
 } SplitResult;
+
+// need to declare the header for merging
+void fixUnderflow(BTreeNode*, int);
 
 void* safeMalloc(size_t size) {
     void* p = malloc(size);
@@ -118,7 +122,7 @@ int getKeyPosition(int *array, int size, int key) {
 int hasKeyInNode(int *array, int size, int key) {
     int left = 0, right = size - 1;
 
-    while (left != right) {
+    while (left <= right) {
         int mid = (left + right) / 2;
 
         if (key == array[mid]) {
@@ -340,6 +344,14 @@ void borrowFromLeft(BTreeNode* parent, int childIndex) {
 
     parent->keys[childIndex - 1] = leftChild->keys[leftChild->currentKeys - 1];
     leftChild->currentKeys--;
+
+    // shift children to right
+    for (int i = child->currentKeys; i > 0; i--) {
+        child->children[i] = child->children[i - 1];
+    }
+
+    child->children[0] = leftChild->children[leftChild->currentKeys + 1];
+    leftChild->children[leftChild->currentKeys + 1] = NULL;
 }
 
 void borrowFromRight(BTreeNode* parent, int childIndex) {
@@ -356,10 +368,98 @@ void borrowFromRight(BTreeNode* parent, int childIndex) {
     }
 
     rightChild->currentKeys--;
+
+    // TODO: child stuff like borrow left
 }
 
 void mergeChildren(BTreeNode* parent, int childIndex) {
-    printf("hello from merge\n");
+    // root case
+    if (parent->parent == NULL) {
+
+    }
+
+    BTreeNode *underflowingChild = parent->children[childIndex];
+
+    // check if it can merge with left child
+    if (childIndex > 0) {
+        BTreeNode *leftChild = parent->children[childIndex - 1];
+        int parentSeparator = parent->keys[childIndex - 1];
+        int base = leftChild->currentKeys + 1;
+
+        // absorb parent separator
+        leftChild->keys[leftChild->currentKeys++] = parentSeparator;
+        deleteFromArray(parent->keys, &parent->currentKeys, childIndex - 1);
+
+        // absorb the underflowing child
+        for (int i = 0; i < underflowingChild->currentKeys; i++) {
+            leftChild->keys[leftChild->currentKeys++] = underflowingChild->keys[i];
+        }
+
+        // fix children in case the underflowing child has any
+        for (int i = 0; i <= underflowingChild->currentKeys; i++) {
+            leftChild->children[base + i] = underflowingChild->children[i];
+
+            // make the parent of the underflowing node the left child instead of the
+            // soon-to-be deleted underflowing child
+            if (leftChild->children[base + i] != NULL) {
+                leftChild->children[base + i]->parent = leftChild;
+            }
+        }
+
+        // delete the childs link to the parent
+        for (int i = childIndex; i <= parent->currentKeys; i++) {
+            parent->children[i] = parent->children[i + 1];
+        }
+
+        // kil the underflowing child
+        // but dont kil its actual children
+        free(underflowingChild->keys);
+        free(underflowingChild->children);
+        free(underflowingChild);
+    }
+
+    // we mergin with the right child
+    else {
+        BTreeNode *rightChild = parent->children[childIndex + 1];
+        int parentSeparator = parent->keys[childIndex];
+        int oldKeys = underflowingChild->currentKeys;
+
+        // absorb the parent separator
+        underflowingChild->keys[underflowingChild->currentKeys++] = parentSeparator;
+        deleteFromArray(parent->keys, &parent->currentKeys, childIndex);
+
+        // absorb the right child
+        for (int i = 0; i < rightChild->currentKeys; i++) {
+            underflowingChild->keys[underflowingChild->currentKeys++] = rightChild->keys[i];
+        }
+
+        // fix children
+        int base = oldKeys + 1;
+        for (int i = 0; i <= rightChild->currentKeys; i++) {
+            underflowingChild->children[base + i] = rightChild->children[i];
+
+            if (rightChild->children[i] != NULL) {
+                rightChild->children[i]->parent = underflowingChild;
+            }
+        }
+
+        // delete the childs link to the parent
+        for (int i = childIndex + 1; i <= parent->currentKeys; i++) {
+            parent->children[i] = parent->children[i + 1];
+        }
+
+        // kil the right child
+        free(rightChild->keys);
+        free(rightChild->children);
+        free(rightChild);
+    }
+
+    // now check if parent is underflowing
+    if (parent->currentKeys < MINIMUM_KEYS) {
+        if (parent->parent != NULL) {
+            fixUnderflow(parent->parent, getKeyPosition(parent->parent->keys, parent->parent->currentKeys, parent->keys[0]));
+        }
+    }
 }
 
 void fixUnderflow(BTreeNode* parent, int childIndex) {
@@ -451,7 +551,8 @@ void printBTree(BTreeNode* root) {
 }
 
 int main() {
-    BTree* tree = initBTree(5);
+    // global variable
+    BTree* tree = initBTree(treeDegree);
 
     for (int i = 1; i <= 27; i++) {
         insertToBTree(tree, tree->root, i);
@@ -461,12 +562,15 @@ int main() {
 
     BTreeNode *child = getChild(tree->root, 10);
 
-    for (int i = 0; i < child->currentKeys; i++) {
-        printf("%d ", child->keys[i]);
-    }
+    // for (int i = 0; i < child->currentKeys; i++) {
+        // printf("%d ", child->keys[i]);
+    // }
 
-    deleteFromBTree(tree, 23);
+    deleteFromBTree(tree, 19);
     deleteFromBTree(tree, 22);
+    deleteFromBTree(tree, 18);
+    // deleteFromBTree(tree, 22);
+
     printBTree(tree->root);
     //
     // deleteFromBTree(tree, 9);
