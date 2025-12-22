@@ -550,6 +550,14 @@ int deleteHelper(BTreeNode* root, int key) {
 
     // leaf delete operation
     if (isLeaf(root)) {
+        // if only the root is left
+        if (root->parent == NULL) {
+            int childIndex = getNewKeyPosition(root->keys, root->currentKeys, key);
+            deleteFromArray(root->keys, &root->currentKeys, childIndex);
+
+            return 0;
+        }
+
         int childIndex = getNewKeyPosition(root->parent->keys, root->parent->currentKeys, key);
         deleteFromArray(root->keys, &root->currentKeys, pos);
 
@@ -605,6 +613,7 @@ void deleteFromBTree(BTree* tree, int key) {
 
         // kil the nodes
         tree->root = leftChild;
+        leftChild->parent = NULL;
 
         free(root->keys);
         free(root->children);
@@ -620,11 +629,17 @@ int main() {
     // global variable
     BTree* tree = initBTree(treeDegree);
 
-    for (int i = 1; i <= 50; i++) {
+    for (int i = 1; i <= 1024; i++) {
         insertToBTree(tree, tree->root, i);
         // printBTree(tree->root);
         // printf("------------\n");
     }
+
+    for (int i = 1; i < 1020; i++) {
+        deleteFromBTree(tree, i);
+    }
+
+    deleteFromBTree(tree, 44);
 
     // BTreeNode *child = getChild(tree->root, 10);
 
@@ -639,7 +654,7 @@ int main() {
     // deleteFromBTree(tree, 6);
     // deleteFromBTree(tree, 2);
     // deleteFromBTree(tree, 9);
-    deleteFromBTree(tree, 16);
+    // deleteFromBTree(tree, 16);
 
     printBTree(tree->root);
 
