@@ -142,7 +142,7 @@ int isLeaf(BTreeNode *node) {
     return 1;
 }
 
-int getKeyPosition(int *array, int size, int key) {
+int getNewKeyPosition(int *array, int size, int key) {
     if (size == 0) return 0;
 
     int pos = 0;
@@ -188,7 +188,7 @@ void insertSortedArray(int *array, int *size, int key) {
         return;
     }
 
-    int pos = getKeyPosition(array, *size, key);
+    int pos = getNewKeyPosition(array, *size, key);
 
     // move the nodes 1 position to the right starting from pos
     for (int i = *size; i >= pos && i > 0; i--) {
@@ -207,7 +207,7 @@ void deleteFromArray(int *array, int *size, int pos) {
     (*size)--;
 }
 
-SplitResult insertInternal(BTreeNode* root, int key) {
+SplitResult insertHelper(BTreeNode* root, int key) {
     SplitResult result = {0, 0, NULL};
 
     // case 1: leaf
@@ -250,10 +250,10 @@ SplitResult insertInternal(BTreeNode* root, int key) {
 
     // case 2: it has propagated to an internal node
     // find the correct child top to bottom
-    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    int pos = getNewKeyPosition(root->keys, root->currentKeys, key);
     BTreeNode *child = root->children[pos];
 
-    SplitResult childSplit = insertInternal(child, key);
+    SplitResult childSplit = insertHelper(child, key);
 
     // the node has been inserted without splits
     if (!childSplit.hasSplit) {
@@ -336,7 +336,7 @@ SplitResult insertInternal(BTreeNode* root, int key) {
 }
 
 void insertToBTree(BTree* tree, BTreeNode* root, int key) {
-    SplitResult result = insertInternal(root, key);
+    SplitResult result = insertHelper(root, key);
 
     if (result.hasSplit) {
         BTreeNode *newRoot = initRoot();
@@ -367,8 +367,16 @@ BTreeNode* getChild(BTreeNode* root, int key) {
 
     // key is in a child
     // get right child position
-    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    int pos = getNewKeyPosition(root->keys, root->currentKeys, key);
     return getChild(root->children[pos], key);
+}
+
+BTreeNode* getRightmostChild(BTreeNode* root) {
+    if (isLeaf(root)) {
+        return root;
+    }
+
+    return getRightmostChild(root->children[root->currentKeys]);
 }
 
 void borrowFromLeft(BTreeNode* parent, int childIndex) {
@@ -422,7 +430,7 @@ void borrowFromRight(BTreeNode* parent, int childIndex) {
 
 int mergeChildren(BTreeNode* parent, int childIndex) {
     // root case, treat by parent caller
-    if (parent->parent == NULL) {
+    if (parent->parent == NULL && parent->currentKeys == 1) {
         return 1;
     }
 
@@ -503,8 +511,8 @@ int mergeChildren(BTreeNode* parent, int childIndex) {
     }
 
     // now check if parent is underflowing
-    if (parent->currentKeys < MINIMUM_KEYS) {
-        return fixUnderflow(parent->parent, getKeyPosition(parent->parent->keys, parent->parent->currentKeys, parent->keys[0]));
+    if (parent->currentKeys < MINIMUM_KEYS && parent->parent != NULL) {
+        return fixUnderflow(parent->parent, getNewKeyPosition(parent->parent->keys, parent->parent->currentKeys, parent->keys[0]));
     }
 
     return 0;
@@ -531,22 +539,41 @@ int fixUnderflow(BTreeNode* parent, int childIndex) {
     return mergeChildren(parent, childIndex);
 }
 
-int deleteInternal(BTreeNode* root, int key) {
+// only ever returns 1 if the root has to recursively merge in fixUnderflow -> mergeChildren
+int deleteHelper(BTreeNode* root, int key) {
     // key doesnt exist in tree
     if (root == NULL) {
         return 0;
     }
 
-    int pos = getKeyPosition(root->keys, root->currentKeys, key);
+    int pos = getNewKeyPosition(root->keys, root->currentKeys, key);
+
     // leaf delete operation
     if (isLeaf(root)) {
-        int childIndex = getKeyPosition(root->parent->keys, root->parent->currentKeys, key);
+        int childIndex = getNewKeyPosition(root->parent->keys, root->parent->currentKeys, key);
         deleteFromArray(root->keys, &root->currentKeys, pos);
 
         // call helper function if the tree becomes invalid after delete
         if (root->currentKeys < MINIMUM_KEYS) {
             return fixUnderflow(root->parent, childIndex);
         }
+
+        return 0;
+    }
+
+    // internal node delete operation
+    BTreeNode *predecessor = getRightmostChild(root->children[pos]);
+    int newKey = predecessor->keys[predecessor->currentKeys - 1];
+    int childIndex = getNewKeyPosition(predecessor->parent->keys, predecessor->parent->currentKeys, newKey);
+
+    // replace the separator in the parent with the max key in left subtree
+    root->keys[pos > 0? pos - 1 : pos] = newKey;
+
+    // delete it from the leaf node
+    deleteFromArray(predecessor->keys, &predecessor->currentKeys, predecessor->currentKeys - 1);
+
+    if (predecessor->currentKeys < MINIMUM_KEYS) {
+        return fixUnderflow(predecessor->parent, childIndex);
     }
 
     return 0;
@@ -556,7 +583,7 @@ int deleteInternal(BTreeNode* root, int key) {
 void deleteFromBTree(BTree* tree, int key) {
     BTreeNode *child = getChild(tree->root, key);
 
-    int mergeRoot = deleteInternal(child, key);
+    int mergeRoot = deleteHelper(child, key);
 
     if (mergeRoot) {
         BTreeNode *leftChild = tree->root->children[0];
@@ -593,26 +620,26 @@ int main() {
     // global variable
     BTree* tree = initBTree(treeDegree);
 
-    for (int i = 1; i <= 27; i++) {
+    for (int i = 1; i <= 50; i++) {
         insertToBTree(tree, tree->root, i);
         // printBTree(tree->root);
         // printf("------------\n");
     }
 
-    BTreeNode *child = getChild(tree->root, 10);
+    // BTreeNode *child = getChild(tree->root, 10);
 
     // for (int i = 0; i < child->currentKeys; i++) {
         // printf("%d ", child->keys[i]);
     // }
 
-    deleteFromBTree(tree, 1);
-    deleteFromBTree(tree, 2);
-    deleteFromBTree(tree, 11);
-    deleteFromBTree(tree, 15);
-    deleteFromBTree(tree, 10);
-    deleteFromBTree(tree, 8);
-    deleteFromBTree(tree, 9);
-    deleteFromBTree(tree, 7);
+    // deleteFromBTree(tree, 4);
+    // deleteFromBTree(tree, 3);
+    // deleteFromBTree(tree, 5);
+    // deleteFromBTree(tree, 8);
+    // deleteFromBTree(tree, 6);
+    // deleteFromBTree(tree, 2);
+    // deleteFromBTree(tree, 9);
+    deleteFromBTree(tree, 16);
 
     printBTree(tree->root);
 
