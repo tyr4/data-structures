@@ -1,10 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-int treeDegree = 3;
-#define MAX_KEYS (2 * treeDegree - 1)
-#define MINIMUM_KEYS (treeDegree - 1)
+#include <time.h>
 
 typedef struct node {
     int *keys;
@@ -18,6 +15,7 @@ typedef struct btree {
     BTreeNode *root;
 
     int t; // minimum degree
+    int maxKeys, minKeys;
 } BTree;
 
 typedef struct splitResult {
@@ -27,7 +25,7 @@ typedef struct splitResult {
 } SplitResult;
 
 // need to declare the header for merging
-int fixUnderflow(BTreeNode*, int);
+int fixUnderflow(BTreeNode*, int, int);
 
 void* safeMalloc(size_t size) {
     void* p = malloc(size);
@@ -40,26 +38,26 @@ void* safeMalloc(size_t size) {
     return p;
 }
 
-BTreeNode* initRoot() {
+BTreeNode* initRoot(int maxKeys) {
     BTreeNode *node = (BTreeNode*)safeMalloc(sizeof(BTreeNode));
 
-    node->keys = (int*)safeMalloc(sizeof(int) * MAX_KEYS);
-    node->children = (BTreeNode**)safeMalloc(sizeof(BTreeNode*) * (MAX_KEYS + 1));
+    node->keys = (int*)safeMalloc(sizeof(int) * maxKeys);
+    node->children = (BTreeNode**)safeMalloc(sizeof(BTreeNode*) * (maxKeys + 1));
     node->parent = NULL;
     node->currentKeys = 0;
 
     // make sure the children are set on NULL and keys on -1
-    for (int i = 0; i < MAX_KEYS; i++) {
+    for (int i = 0; i < maxKeys; i++) {
         node->children[i] = NULL;
         node->keys[i] = 0;
     }
-    node->children[MAX_KEYS] = NULL;
+    node->children[maxKeys] = NULL;
 
     return node;
 }
 
-BTreeNode* initChild(BTreeNode *parent) {
-    BTreeNode *node = initRoot();
+BTreeNode* initChild(BTreeNode *parent, int maxKeys) {
+    BTreeNode *node = initRoot(maxKeys);
 
     node->parent = parent;
 
@@ -68,8 +66,10 @@ BTreeNode* initChild(BTreeNode *parent) {
 
 BTree* initBTree(int t) {
     BTree *tree = (BTree*)safeMalloc(sizeof(BTree));
-    tree->root = initRoot();
     tree->t = t;
+    tree->maxKeys = 2 * t - 1;
+    tree->minKeys = t - 1;
+    tree->root = initRoot(tree->maxKeys);
 
     return tree;
 }
@@ -132,36 +132,37 @@ void freeBTree(BTreeNode *root) {
     free(root);
 }
 
-int isLeaf(BTreeNode *node) {
-    for (int i = 0; i <= node->currentKeys; i++) {
-        if (node->children[i] != NULL) {
-            return 0;
-        }
+inline int isLeaf(BTreeNode *node) {
+    if (node->children[0] != NULL) {
+        return 0;
     }
 
     return 1;
 }
 
-int getNewKeyPosition(int *array, int size, int key) {
+inline int getNewKeyPosition(int *array, int size, int key) {
     if (size == 0) return 0;
 
-    int pos = 0;
+    int left = 0, right = size - 1;
 
-    // the = stuff is for calls from the delete functions
-    if (key <= array[0]) pos = 0;                    // left
-    else if (key >= array[size - 1]) pos = size;     // right
-    else for (int i = 0; i < size - 1; i++) {       // inbetween
-        if (key >= array[i] && key <= array[i + 1]) {
-            pos = i + 1;
-            break;
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+
+        if (key < array[mid]) {
+            right = mid - 1;
+        } else if (key > array[mid]) {
+            left = mid + 1;
+        } else { // exact match
+            return mid;
         }
     }
 
-    return pos;
+    // left now points to the first element greater than key
+    return left;
 }
 
 // funni binary search
-int hasKeyInNode(int *array, int size, int key) {
+inline int hasKeyInNode(int *array, int size, int key) {
     int left = 0, right = size - 1;
 
     while (left <= right) {
@@ -207,12 +208,12 @@ void deleteFromArray(int *array, int *size, int pos) {
     (*size)--;
 }
 
-SplitResult insertHelper(BTreeNode* root, int key) {
+SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
     SplitResult result = {0, 0, NULL};
 
     // case 1: leaf
     if (isLeaf(root)) {
-        if (root->currentKeys < MAX_KEYS) {
+        if (root->currentKeys < maxKeys) {
             insertSortedArray(root->keys, &root->currentKeys, key);
             return result;
         }
@@ -229,7 +230,7 @@ SplitResult insertHelper(BTreeNode* root, int key) {
         result.hasSplit = 1;
 
         // make a split node
-        BTreeNode *rightNode = initChild(root);
+        BTreeNode *rightNode = initChild(root, maxKeys);
         result.rightNode = rightNode;
 
         // replace the current node with the left side
@@ -253,7 +254,7 @@ SplitResult insertHelper(BTreeNode* root, int key) {
     int pos = getNewKeyPosition(root->keys, root->currentKeys, key);
     BTreeNode *child = root->children[pos];
 
-    SplitResult childSplit = insertHelper(child, key);
+    SplitResult childSplit = insertHelper(child, key, maxKeys);
 
     // the node has been inserted without splits
     if (!childSplit.hasSplit) {
@@ -261,7 +262,7 @@ SplitResult insertHelper(BTreeNode* root, int key) {
     }
 
     // case 2A: child split, safe to add directly here
-    if (root->currentKeys < MAX_KEYS) {
+    if (root->currentKeys < maxKeys) {
         insertSortedArray(root->keys, &root->currentKeys, childSplit.promotedKey);
 
         // shift children to the correct place
@@ -300,7 +301,7 @@ SplitResult insertHelper(BTreeNode* root, int key) {
 
     result.hasSplit = 1;
 
-    BTreeNode *rightNode = initChild(root->parent);
+    BTreeNode *rightNode = initChild(root->parent, maxKeys);
     result.rightNode = rightNode;
 
     // replace the left childs data
@@ -335,11 +336,11 @@ SplitResult insertHelper(BTreeNode* root, int key) {
     return result;
 }
 
-void insertToBTree(BTree* tree, BTreeNode* root, int key) {
-    SplitResult result = insertHelper(root, key);
+void insertToBTree(BTree* tree, int key) {
+    SplitResult result = insertHelper(tree->root, key, tree->maxKeys);
 
     if (result.hasSplit) {
-        BTreeNode *newRoot = initRoot();
+        BTreeNode *newRoot = initRoot(tree->maxKeys);
         newRoot->keys[newRoot->currentKeys++] = result.promotedKey;
         newRoot->children[0] = tree->root;
         newRoot->children[1] = result.rightNode;
@@ -380,7 +381,6 @@ BTreeNode* getRightmostChild(BTreeNode* root) {
 }
 
 void borrowFromLeft(BTreeNode* parent, int childIndex) {
-    printf("hello from borrow left\n");
     BTreeNode *child = parent->children[childIndex];
     BTreeNode *leftChild = parent->children[childIndex - 1];
 
@@ -405,7 +405,6 @@ void borrowFromLeft(BTreeNode* parent, int childIndex) {
 }
 
 void borrowFromRight(BTreeNode* parent, int childIndex) {
-    printf("hello from borrow right\n");
     BTreeNode *child = parent->children[childIndex];
     BTreeNode *rightChild = parent->children[childIndex + 1];
 
@@ -428,7 +427,7 @@ void borrowFromRight(BTreeNode* parent, int childIndex) {
     }
 }
 
-int mergeChildren(BTreeNode* parent, int childIndex) {
+int mergeChildren(BTreeNode* parent, int childIndex, int minKeys) {
     // root case, treat by parent caller
     if (parent->parent == NULL && parent->currentKeys == 1) {
         return 1;
@@ -511,17 +510,17 @@ int mergeChildren(BTreeNode* parent, int childIndex) {
     }
 
     // now check if parent is underflowing
-    if (parent->currentKeys < MINIMUM_KEYS && parent->parent != NULL) {
-        return fixUnderflow(parent->parent, getNewKeyPosition(parent->parent->keys, parent->parent->currentKeys, parent->keys[0]));
+    if (parent->currentKeys < minKeys && parent->parent != NULL) {
+        return fixUnderflow(parent->parent, getNewKeyPosition(parent->parent->keys, parent->parent->currentKeys, parent->keys[0]), minKeys);
     }
 
     return 0;
 }
 
-int fixUnderflow(BTreeNode* parent, int childIndex) {
+int fixUnderflow(BTreeNode* parent, int childIndex, int minKeys) {
     // first check if it can borrow from left
     if (childIndex > 0) {
-        if (parent->children[childIndex - 1] != NULL && parent->children[childIndex - 1]->currentKeys > MINIMUM_KEYS) {
+        if (parent->children[childIndex - 1] != NULL && parent->children[childIndex - 1]->currentKeys > minKeys) {
             borrowFromLeft(parent, childIndex);
             return 0;
         }
@@ -529,18 +528,18 @@ int fixUnderflow(BTreeNode* parent, int childIndex) {
 
     // then from right
     if (childIndex < parent->currentKeys) {
-        if (parent->children[childIndex + 1] != NULL && parent->children[childIndex + 1]->currentKeys > MINIMUM_KEYS) {
+        if (parent->children[childIndex + 1] != NULL && parent->children[childIndex + 1]->currentKeys > minKeys) {
             borrowFromRight(parent, childIndex);
             return 0;
         }
     }
 
     // forced to merge
-    return mergeChildren(parent, childIndex);
+    return mergeChildren(parent, childIndex, minKeys);
 }
 
 // only ever returns 1 if the root has to recursively merge in fixUnderflow -> mergeChildren
-int deleteHelper(BTreeNode* root, int key) {
+int deleteHelper(BTreeNode* root, int key, int minKeys) {
     // key doesnt exist in tree
     if (root == NULL) {
         return 0;
@@ -552,8 +551,7 @@ int deleteHelper(BTreeNode* root, int key) {
     if (isLeaf(root)) {
         // if only the root is left
         if (root->parent == NULL) {
-            int childIndex = getNewKeyPosition(root->keys, root->currentKeys, key);
-            deleteFromArray(root->keys, &root->currentKeys, childIndex);
+            deleteFromArray(root->keys, &root->currentKeys, pos);
 
             return 0;
         }
@@ -562,8 +560,8 @@ int deleteHelper(BTreeNode* root, int key) {
         deleteFromArray(root->keys, &root->currentKeys, pos);
 
         // call helper function if the tree becomes invalid after delete
-        if (root->currentKeys < MINIMUM_KEYS) {
-            return fixUnderflow(root->parent, childIndex);
+        if (root->currentKeys < minKeys) {
+            return fixUnderflow(root->parent, childIndex, minKeys);
         }
 
         return 0;
@@ -580,8 +578,8 @@ int deleteHelper(BTreeNode* root, int key) {
     // delete it from the leaf node
     deleteFromArray(predecessor->keys, &predecessor->currentKeys, predecessor->currentKeys - 1);
 
-    if (predecessor->currentKeys < MINIMUM_KEYS) {
-        return fixUnderflow(predecessor->parent, childIndex);
+    if (predecessor->currentKeys < minKeys) {
+        return fixUnderflow(predecessor->parent, childIndex, minKeys);
     }
 
     return 0;
@@ -591,7 +589,7 @@ int deleteHelper(BTreeNode* root, int key) {
 void deleteFromBTree(BTree* tree, int key) {
     BTreeNode *child = getChild(tree->root, key);
 
-    int mergeRoot = deleteHelper(child, key);
+    int mergeRoot = deleteHelper(child, key, tree->minKeys);
 
     if (mergeRoot) {
         BTreeNode *leftChild = tree->root->children[0];
@@ -626,44 +624,23 @@ void deleteFromBTree(BTree* tree, int key) {
 }
 
 int main() {
-    // global variable
-    BTree* tree = initBTree(treeDegree);
+    BTree* tree = initBTree(128);
 
-    for (int i = 1; i <= 1024; i++) {
-        insertToBTree(tree, tree->root, i);
-        // printBTree(tree->root);
-        // printf("------------\n");
-    }
-
-    for (int i = 1; i < 1020; i++) {
-        deleteFromBTree(tree, i);
-    }
-
-    deleteFromBTree(tree, 44);
-
-    // BTreeNode *child = getChild(tree->root, 10);
-
-    // for (int i = 0; i < child->currentKeys; i++) {
-        // printf("%d ", child->keys[i]);
+    // FILE *input = fopen("../b-tree/keys.txt", "r");
+    // char buffer[100];
+    // int i = 0;
+    //
+    // while (fgets(buffer, 100, input)) {
+    //     int num = atoi(buffer);
+    //     insertToBTree(tree, num);
+    //
+    //     if (i % 100000 == 0) {
+    //         printf("Iter %d\n", i);
+    //     }
+    //
+    //     i++;
     // }
 
-    // deleteFromBTree(tree, 4);
-    // deleteFromBTree(tree, 3);
-    // deleteFromBTree(tree, 5);
-    // deleteFromBTree(tree, 8);
-    // deleteFromBTree(tree, 6);
-    // deleteFromBTree(tree, 2);
-    // deleteFromBTree(tree, 9);
-    // deleteFromBTree(tree, 16);
-
-    printBTree(tree->root);
-
-    // printBTree(tree->root);
-    //
-    // deleteFromBTree(tree, 9);
-    // // printBTree(tree->root);
-    //
-    // deleteFromBTree(tree, 7);
     // printBTree(tree->root);
 
     freeBTree(tree->root);

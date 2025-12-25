@@ -1,5 +1,12 @@
 .idea/
+build/
 *.out
+
+# 50 mil random unique number test input
+keys.txt
+
+# profiler stuff
+perf.*
 
 # valgrind stuff
 vgcore.*
