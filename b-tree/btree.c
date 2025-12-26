@@ -22,6 +22,7 @@ BTreeNode* initRoot(int maxKeys) {
     node->children = (BTreeNode**)safeMalloc(sizeof(BTreeNode*) * (maxKeys + 1));
     node->parent = NULL;
     node->currentKeys = 0;
+    node->isLeaf = 1;
 
     // make sure the children are set on NULL and keys on -1
     for (int i = 0; i < maxKeys; i++) {
@@ -33,10 +34,11 @@ BTreeNode* initRoot(int maxKeys) {
     return node;
 }
 
-BTreeNode* initChild(BTreeNode *parent, int maxKeys) {
+BTreeNode* initChild(BTreeNode* parent, int maxKeys) {
     BTreeNode *node = initRoot(maxKeys);
 
     node->parent = parent;
+    node->isLeaf = 1;
 
     return node;
 }
@@ -118,36 +120,16 @@ void freeBTree(BTree* tree) {
     free(tree);
 }
 
-static inline int isLeaf(BTreeNode *node) {
-    if (node->children[0] != NULL) {
-        return 0;
+int getNewKeyPosition(int* array, int size, int key) {
+    int i = 0;
+    while (i < size && key > array[i]) {
+        i++;
     }
 
-    return 1;
+    return i;
 }
 
-static inline int getNewKeyPosition(int *array, int size, int key) {
-    if (size == 0) return 0;
-
-    int left = 0, right = size - 1;
-
-    while (left <= right) {
-        int mid = left + (right - left) / 2;
-
-        if (key < array[mid]) {
-            right = mid - 1;
-        } else if (key > array[mid]) {
-            left = mid + 1;
-        } else { // exact match
-            return mid;
-        }
-    }
-
-    // left now points to the first element greater than key
-    return left;
-}
-
-static inline int hasKeyInNode(int *array, int size, int key) {
+int hasKeyInNode(int* array, int size, int key) {
     int left = 0, right = size - 1;
 
     while (left <= right) {
@@ -168,7 +150,7 @@ static inline int hasKeyInNode(int *array, int size, int key) {
     return array[left] == key;
 }
 
-void insertSortedArray(int *array, int *size, int key) {
+void insertSortedArray(int* array, int *size, int key) {
     if (*size == 0) {
         array[(*size)++] = key;
         return;
@@ -185,7 +167,7 @@ void insertSortedArray(int *array, int *size, int key) {
     (*size)++;
 }
 
-void deleteFromArray(int *array, int *size, int pos) {
+void deleteFromArray(int* array, int *size, int pos) {
     for (int i = pos; i < *size - 1; i++) {
         array[i] = array[i + 1];
     }
@@ -221,6 +203,7 @@ void splitChild(BTreeNode* parent, int childIndex, int maxKeys) {
     memcpy(rightChild->keys, child->keys + mid + 1, rightChild->currentKeys * sizeof(int));
     memcpy(rightChild->children, child->children + mid + 1, (rightChild->currentKeys + 1) * sizeof(BTreeNode*));
 
+    rightChild->isLeaf = child->isLeaf;
     child->currentKeys = mid;
 }
 
@@ -228,7 +211,7 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
     SplitResult result = {0, 0, NULL};
 
     // case 1: leaf
-    if (isLeaf(root)) {
+    if (root->isLeaf) {
         if (root->currentKeys < maxKeys) {
             insertSortedArray(root->keys, &root->currentKeys, key);
             return result;
@@ -246,8 +229,8 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
         result.hasSplit = 1;
 
         // make a split node
-        BTreeNode *rightNode = initChild(root, maxKeys);
-        result.rightNode = rightNode;
+        BTreeNode *rightChild = initChild(root, maxKeys);
+        result.rightChild = rightChild;
 
         // replace the current node with the left side
         int mid = tempSize / 2;
@@ -258,7 +241,7 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
 
         // set the right childs keys
         for (int i = mid + 1; i < tempSize; i++) {
-            rightNode->keys[rightNode->currentKeys++] = temp[i];
+            rightChild->keys[rightChild->currentKeys++] = temp[i];
         }
 
         // return the structure with the split data
@@ -286,8 +269,8 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
             root->children[i] = root->children[i - 1];
         }
 
-        root->children[pos + 1] = childSplit.rightNode;
-        childSplit.rightNode->parent = root;
+        root->children[pos + 1] = childSplit.rightChild;
+        childSplit.rightChild->parent = root;
 
         return result;
     }
@@ -310,15 +293,15 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
     }
 
     // split this node
-    tempChildren[pos + 1] = childSplit.rightNode;
+    tempChildren[pos + 1] = childSplit.rightChild;
 
     int mid = tempKeyCount / 2;
     result.promotedKey = tempKeys[mid];
 
     result.hasSplit = 1;
 
-    BTreeNode *rightNode = initChild(root->parent, maxKeys);
-    result.rightNode = rightNode;
+    BTreeNode *rightChild = initChild(root->parent, maxKeys);
+    result.rightChild = rightChild;
 
     // replace the left childs data
     root->currentKeys = 0;
@@ -337,17 +320,19 @@ SplitResult insertHelper(BTreeNode* root, int key, int maxKeys) {
 
     // same for the right node
     for (int i = mid + 1; i < tempKeyCount; i++) {
-        rightNode->keys[rightNode->currentKeys] = tempKeys[i];
-        rightNode->children[rightNode->currentKeys] = tempChildren[i];
+        rightChild->keys[rightChild->currentKeys] = tempKeys[i];
+        rightChild->children[rightChild->currentKeys] = tempChildren[i];
 
         if (tempChildren[i])
-            tempChildren[i]->parent = rightNode;
+            tempChildren[i]->parent = rightChild;
 
-        rightNode->currentKeys++;
+        rightChild->currentKeys++;
     }
-    rightNode->children[rightNode->currentKeys] = tempChildren[tempKeyCount];
+    rightChild->children[rightChild->currentKeys] = tempChildren[tempKeyCount];
     if (tempChildren[tempKeyCount])
-        tempChildren[tempKeyCount]->parent = rightNode;
+        tempChildren[tempKeyCount]->parent = rightChild;
+
+
 
     return result;
 }
@@ -360,10 +345,15 @@ void insertToBTreeBottomToTop(BTree* tree, int key) {
         BTreeNode *newRoot = initRoot(tree->maxKeys);
         newRoot->keys[newRoot->currentKeys++] = result.promotedKey;
         newRoot->children[0] = tree->root;
-        newRoot->children[1] = result.rightNode;
+        newRoot->children[1] = result.rightChild;
 
-        result.rightNode->parent = newRoot;
+        result.rightChild->parent = newRoot;
         tree->root->parent = newRoot;
+
+        tree->root->isLeaf = tree->root->children[0] == NULL;
+        newRoot->isLeaf = 0;
+        result.rightChild->isLeaf = result.rightChild->children[0] == NULL;
+
         tree->root = newRoot;
     }
 }
@@ -393,13 +383,16 @@ void insertToBTreeTopToBottom(BTree* tree, int key) {
         memcpy(rightChild->keys, root->keys + mid + 1, rightChild->currentKeys * sizeof(int));
         memcpy(rightChild->children, root->children + mid + 1, (rightChild->currentKeys + 1) * sizeof(BTreeNode*));
 
-        // set the new root
+        // set the new root and fix leaves
+        root->isLeaf = root->children[0] == NULL;
+        rightChild->isLeaf = rightChild->children[0] == NULL;
+        newRoot->isLeaf = 0;
         tree->root = newRoot;
     }
 
     // reach the correct child
     BTreeNode *child = tree->root;
-    while (!isLeaf(child)) {
+    while (!child->isLeaf) {
         // check where to descend
         int childIndex = getNewKeyPosition(child->keys, child->currentKeys, key);
 
@@ -427,7 +420,7 @@ BTreeNode* getChild(BTreeNode* root, int key) {
     }
 
     // not found
-    if (isLeaf(root)) {
+    if (root->isLeaf) {
         return NULL;
     }
 
@@ -438,7 +431,7 @@ BTreeNode* getChild(BTreeNode* root, int key) {
 }
 
 BTreeNode* getRightmostChild(BTreeNode* root) {
-    if (isLeaf(root)) {
+    if (root->isLeaf) {
         return root;
     }
 
@@ -613,7 +606,7 @@ int deleteHelper(BTreeNode* root, int key, int minKeys) {
     int pos = getNewKeyPosition(root->keys, root->currentKeys, key);
 
     // leaf delete operation
-    if (isLeaf(root)) {
+    if (root->isLeaf) {
         // if only the root is left
         if (root->parent == NULL) {
             deleteFromArray(root->keys, &root->currentKeys, pos);
