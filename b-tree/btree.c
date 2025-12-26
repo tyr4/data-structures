@@ -638,7 +638,7 @@ int deleteHelper(BTreeNode* root, int key, int minKeys) {
     int childIndex = getNewKeyPosition(predecessor->parent->keys, predecessor->parent->currentKeys, newKey);
 
     // replace the separator in the parent with the max key in left subtree
-    root->keys[pos > 0? pos - 1 : pos] = newKey;
+    root->keys[pos] = newKey;
 
     // delete it from the leaf node
     deleteFromArray(predecessor->keys, &predecessor->currentKeys, predecessor->currentKeys - 1);
